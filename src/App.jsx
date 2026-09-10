@@ -224,11 +224,16 @@ export function App() {
         {activeTab === 'schedule' && (
           <WeeklyBoard
             schedule={appData.weeklySchedule}
-            onUpdateSchedule={(newSched) => updateData({ ...appData, weeklySchedule: newSched })}
             routineTemplates={appData.routineTemplates}
             onOpenWorkout={(routine) => setActiveWorkoutRoutine(routine)}
             backlog={appData.backlog}
-            onUpdateBacklog={(newBacklog) => updateData({ ...appData, backlog: newBacklog })}
+            onUpdateBoard={({ schedule, backlog }) => {
+              updateData((prev) => ({
+                ...prev,
+                ...(schedule !== undefined ? { weeklySchedule: schedule } : {}),
+                ...(backlog !== undefined ? { backlog } : {})
+              }));
+            }}
           />
         )}
 

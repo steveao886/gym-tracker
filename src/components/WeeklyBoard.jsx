@@ -8,29 +8,45 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowLeft,
-  CheckCircle2,
+  Archive,
+  Inbox,
   Clock,
   Sparkles,
   MoveHorizontal,
-  ChevronDown
+  ChevronDown,
+  CornerDownRight,
+  Send
 } from 'lucide-react';
 
 export const WeeklyBoard = ({
-  schedule,
-  onUpdateSchedule,
-  routineTemplates,
+  schedule = [],
+  routineTemplates = [],
   onOpenWorkout,
   backlog = [],
+  onUpdateBoard,
+  onUpdateSchedule,
   onUpdateBacklog
 }) => {
-  const [draggedItem, setDraggedItem] = useState(null); // { fromDay: number | 'backlog', item: object }
+  const [draggedItem, setDraggedItem] = useState(null); // { item, fromDay }
+  const [dragOverTarget, setDragOverTarget] = useState(null); // number | 'backlog' | null
   const [activeMenuDay, setActiveMenuDay] = useState(null);
+  const [activeMoveItemId, setActiveMoveItemId] = useState(null);
 
   // 获取今天是周几 (0=周一, ... 6=周日)
   const currentDayIndex = (() => {
     const day = new Date().getDay(); // 0 is Sunday in JS
     return day === 0 ? 6 : day - 1;
   })();
+
+  // 统一的原子化更新方法，避免 React 状态覆盖
+  const commitChanges = (newSchedule, newBacklog) => {
+    if (onUpdateBoard) {
+      onUpdateBoard({ schedule: newSchedule, backlog: newBacklog });
+    } else {
+      if (onUpdateSchedule) onUpdateSchedule(newSchedule);
+      if (onUpdateBacklog) onUpdateBacklog(newBacklog);
+    }
+  };
 
   // 冲突检测：某一天是否同时有网球和重负荷腿部 (Squat/Deadlift)
   const checkDayConflict = (dayItems) => {
@@ -53,64 +69,127 @@ export const WeeklyBoard = ({
     return null;
   };
 
-  // 拖拽处理
+  // --- 拖拽生命周期处理 ---
   const handleDragStart = (e, item, fromDay) => {
     setDraggedItem({ item, fromDay });
-    e.dataTransfer.setData('text/plain', JSON.stringify({ item, fromDay }));
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('application/json', JSON.stringify({ item, fromDay }));
+    } catch (err) {}
   };
 
-  const handleDragOver = (e) => {
+  const handleDragOver = (e, target) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverTarget !== target) {
+      setDragOverTarget(target);
+    }
+  };
+
+  const handleDragLeave = (e) => {
     e.preventDefault();
   };
 
-  const handleDrop = (e, targetDayIndex) => {
+  const handleDrop = (e, targetDayOrBacklog) => {
     e.preventDefault();
-    if (!draggedItem) return;
+    e.stopPropagation();
+    setDragOverTarget(null);
 
-    const { item, fromDay } = draggedItem;
+    // 优先从 state 获取，兜底从 dataTransfer 解析
+    let item = draggedItem?.item;
+    let fromDay = draggedItem?.fromDay;
 
-    if (fromDay === targetDayIndex) {
+    if (!item) {
+      try {
+        const json = e.dataTransfer.getData('application/json');
+        if (json) {
+          const parsed = JSON.parse(json);
+          item = parsed.item;
+          fromDay = parsed.fromDay;
+        }
+      } catch (err) {}
+    }
+
+    if (!item || fromDay === undefined || fromDay === null) {
       setDraggedItem(null);
       return;
     }
 
-    const newSchedule = schedule.map(d => ({ ...d, items: [...d.items] }));
-    let newBacklog = [...backlog];
-
-    // 1. 从原处移除
-    if (fromDay === 'backlog') {
-      newBacklog = newBacklog.filter(i => i.id !== item.id);
-    } else {
-      newSchedule[fromDay].items = newSchedule[fromDay].items.filter(i => i.id !== item.id);
+    // 拖入相同位置，无操作
+    if (fromDay === targetDayOrBacklog) {
+      setDraggedItem(null);
+      return;
     }
 
-    // 2. 加入新目标
-    if (targetDayIndex === 'backlog') {
-      newBacklog.push(item);
-    } else {
-      newSchedule[targetDayIndex].items.push(item);
-    }
-
-    onUpdateSchedule(newSchedule);
-    if (onUpdateBacklog) onUpdateBacklog(newBacklog);
+    // 执行跨列/跨备选池移动
+    moveItemAtomic(item, fromDay, targetDayOrBacklog);
     setDraggedItem(null);
   };
 
-  // 快捷冲突自动避让：将当天的腿部移动到第二天
-  const handleResolveConflictShift = (dayIdx, heavyItemId) => {
-    const nextDayIdx = (dayIdx + 1) % 7;
-    const newSchedule = schedule.map(d => ({ ...d, items: [...d.items] }));
-
-    const itemToMove = newSchedule[dayIdx].items.find(i => i.id === heavyItemId);
-    if (!itemToMove) return;
-
-    newSchedule[dayIdx].items = newSchedule[dayIdx].items.filter(i => i.id !== heavyItemId);
-    newSchedule[nextDayIdx].items.push(itemToMove);
-
-    onUpdateSchedule(newSchedule);
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDragOverTarget(null);
   };
 
-  // 快捷添加活动
+  // 原子化移动方法 (支持拖拽或直接点击按钮调用)
+  const moveItemAtomic = (item, fromLocation, toLocation) => {
+    const newSchedule = schedule.map(d => ({ ...d, items: [...d.items] }));
+    let newBacklog = [...backlog];
+
+    // 1. 从来源移除
+    if (fromLocation === 'backlog') {
+      newBacklog = newBacklog.filter(i => i.id !== item.id);
+    } else {
+      const fromIdx = Number(fromLocation);
+      newSchedule[fromIdx].items = newSchedule[fromIdx].items.filter(i => i.id !== item.id);
+    }
+
+    // 2. 添加到目标
+    if (toLocation === 'backlog') {
+      // 避免重复
+      if (!newBacklog.some(i => i.id === item.id)) {
+        newBacklog.push(item);
+      }
+    } else {
+      const toIdx = Number(toLocation);
+      newSchedule[toIdx].items.push(item);
+    }
+
+    commitChanges(newSchedule, newBacklog);
+    setActiveMoveItemId(null);
+  };
+
+  // 快捷前移 (昨天) 或 后移 (明天)
+  const handleShiftDayDelta = (fromDayIdx, itemId, delta) => {
+    const targetDayIdx = (fromDayIdx + delta + 7) % 7;
+    const day = schedule[fromDayIdx];
+    const item = day?.items.find(i => i.id === itemId);
+    if (!item) return;
+
+    moveItemAtomic(item, fromDayIdx, targetDayIdx);
+  };
+
+  // 快捷存入备选池
+  const handleSendToBacklog = (fromDayIdx, itemId) => {
+    const day = schedule[fromDayIdx];
+    const item = day?.items.find(i => i.id === itemId);
+    if (!item) return;
+
+    moveItemAtomic(item, fromDayIdx, 'backlog');
+  };
+
+  // 快捷从备选池移入今天或指定天
+  const handleMoveBacklogToDay = (item, targetDayIdx) => {
+    moveItemAtomic(item, 'backlog', targetDayIdx);
+  };
+
+  // 冲突自动避让：将当天的腿部移动到明天
+  const handleResolveConflictShift = (dayIdx, heavyItemId) => {
+    handleShiftDayDelta(dayIdx, heavyItemId, 1);
+  };
+
+  // 添加新活动
   const handleAddItem = (dayIndex, newItem) => {
     const newSchedule = schedule.map((d, idx) => {
       if (idx === dayIndex) {
@@ -121,71 +200,67 @@ export const WeeklyBoard = ({
       }
       return d;
     });
-    onUpdateSchedule(newSchedule);
+    commitChanges(newSchedule, backlog);
     setActiveMenuDay(null);
   };
 
-  // 快捷删除项目
+  // 删除项目
   const handleDeleteItem = (dayIndex, itemId) => {
-    const newSchedule = schedule.map((d, idx) => {
-      if (idx === dayIndex) {
-        return {
-          ...d,
-          items: d.items.filter(i => i.id !== itemId)
-        };
-      }
-      return d;
-    });
-    onUpdateSchedule(newSchedule);
-  };
-
-  // 移动项目到前一天/后一天 (移动端手势辅助)
-  const handleShiftItemDay = (currentDay, itemId, delta) => {
-    const targetDay = (currentDay + delta + 7) % 7;
-    const newSchedule = schedule.map(d => ({ ...d, items: [...d.items] }));
-    const item = newSchedule[currentDay].items.find(i => i.id === itemId);
-    if (!item) return;
-
-    newSchedule[currentDay].items = newSchedule[currentDay].items.filter(i => i.id !== itemId);
-    newSchedule[targetDay].items.push(item);
-    onUpdateSchedule(newSchedule);
+    if (dayIndex === 'backlog') {
+      const newBacklog = backlog.filter(i => i.id !== itemId);
+      commitChanges(schedule, newBacklog);
+    } else {
+      const newSchedule = schedule.map((d, idx) => {
+        if (idx === dayIndex) {
+          return { ...d, items: d.items.filter(i => i.id !== itemId) };
+        }
+        return d;
+      });
+      commitChanges(newSchedule, backlog);
+    }
   };
 
   return (
     <div className="space-y-6">
       
-      {/* 顶部周进度指示条 */}
+      {/* 顶部周看板控制栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-dark-surface p-4 rounded-2xl border border-dark-border">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <Calendar className="w-5 h-5 text-athletic-lime" />
-          <h2 className="font-bold text-text-primary text-base sm:text-lg">
-            本周动态排期看板
-          </h2>
-          <span className="text-xs text-text-secondary hidden sm:inline">
-            (卡片可随意拖拽，网球与深蹲冲突时将自动提示)
-          </span>
+          <div>
+            <h2 className="font-bold text-text-primary text-base sm:text-lg">
+              本周动态排期看板
+            </h2>
+            <div className="text-[11px] text-text-secondary">
+              支持卡片自由拖拽、← 前移 / → 后移，或一键存入下方自由备选池
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 text-xs font-mono">
           <span className="px-2.5 py-1 rounded-lg bg-dark-card border border-dark-border text-text-secondary">
-            今日: <strong className="text-athletic-lime">{schedule[currentDayIndex]?.dayName}</strong>
+            今日: <strong className="text-athletic-lime">{schedule[currentDayIndex]?.dayName || '今天'}</strong>
           </span>
         </div>
       </div>
 
-      {/* 7 天周看板网格 (在手机上横向滑动或网格适配) */}
+      {/* 7 天周看板网格 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-3">
         {schedule.map((day) => {
           const isToday = day.dayIndex === currentDayIndex;
+          const isOver = dragOverTarget === day.dayIndex;
           const conflict = checkDayConflict(day.items);
 
           return (
             <div
               key={day.dayIndex}
-              onDragOver={handleDragOver}
+              onDragOver={(e) => handleDragOver(e, day.dayIndex)}
+              onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, day.dayIndex)}
-              className={`rounded-2xl border transition-all flex flex-col min-h-[260px] p-3 ${
-                isToday
+              className={`rounded-2xl border transition-all flex flex-col min-h-[280px] p-3 relative ${
+                isOver
+                  ? 'border-athletic-lime bg-athletic-lime/10 ring-2 ring-athletic-lime/40 shadow-xl'
+                  : isToday
                   ? 'bg-dark-surface/90 border-athletic-lime/50 shadow-lg shadow-athletic-lime/5'
                   : 'bg-dark-surface/40 border-dark-border hover:border-dark-muted'
               }`}
@@ -197,7 +272,7 @@ export const WeeklyBoard = ({
                     {day.dayName}
                   </span>
                   {isToday && (
-                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-athletic-lime text-black tracking-wide">
+                    <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-athletic-lime text-black tracking-wide">
                       TODAY
                     </span>
                   )}
@@ -217,7 +292,7 @@ export const WeeklyBoard = ({
                   {activeMenuDay === day.dayIndex && (
                     <div className="absolute right-0 top-7 z-30 w-52 bg-dark-card border border-dark-border rounded-xl shadow-2xl p-2 text-xs space-y-1">
                       <div className="px-2 py-1 text-[10px] font-mono text-text-secondary uppercase tracking-wider">
-                        添加运动或套餐
+                        添加运动
                       </div>
                       <button
                         type="button"
@@ -268,7 +343,7 @@ export const WeeklyBoard = ({
                     <span>网球与{conflict.routineTitle}同日</span>
                   </div>
                   <p className="text-[10px] text-text-secondary mb-1.5 leading-tight">
-                    下肢可能过度疲劳影响场上蹬地。
+                    下肢可能过度疲劳影响跑动。
                   </p>
                   <button
                     type="button"
@@ -284,98 +359,140 @@ export const WeeklyBoard = ({
               {/* 日程卡片列表 */}
               <div className="flex-1 space-y-2">
                 {day.items.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center py-6 text-text-secondary/40 text-xs border border-dashed border-dark-border/40 rounded-xl">
-                    <span>无安排</span>
-                    <span className="text-[10px]">可拖入项目</span>
+                  <div className={`h-full flex flex-col items-center justify-center py-8 text-xs border border-dashed rounded-xl transition-colors ${
+                    isOver ? 'border-athletic-lime text-athletic-lime' : 'border-dark-border/40 text-text-secondary/40'
+                  }`}>
+                    <span>{isOver ? '松手即可放入' : '无安排'}</span>
+                    <span className="text-[10px]">{isOver ? '✨' : '可拖入项目'}</span>
                   </div>
                 ) : (
                   day.items.map((item) => {
-                    if (item.type === 'routine') {
-                      const routine = routineTemplates.find(r => r.id === item.routineId);
-                      if (!routine) return null;
+                    const isRoutine = item.type === 'routine';
+                    const routine = isRoutine ? routineTemplates.find(r => r.id === item.routineId) : null;
 
-                      return (
-                        <div
-                          key={item.id}
-                          draggable
-                          onDragStart={(e) => handleDragStart(e, item, day.dayIndex)}
-                          onClick={() => onOpenWorkout(routine)}
-                          className="group relative p-2.5 rounded-xl bg-dark-card border border-dark-border hover:border-athletic-lime/50 transition-all cursor-pointer shadow-sm hover:shadow-md"
-                        >
-                          <div className="flex items-start justify-between gap-1.5 mb-1">
-                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-bg text-athletic-lime font-bold border border-dark-border">
-                              {routine.tag}
-                            </span>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleShiftItemDay(day.dayIndex, item.id, 1);
-                                }}
-                                className="p-0.5 text-text-secondary hover:text-text-primary"
-                                title="移到明天"
-                              >
-                                <ArrowRight className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteItem(day.dayIndex, item.id);
-                                }}
-                                className="p-0.5 text-text-secondary hover:text-athletic-coral"
-                                title="删除"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="font-semibold text-xs text-text-primary group-hover:text-athletic-lime transition-colors">
-                            {routine.title}
-                          </div>
-
-                          <div className="mt-1 flex items-center justify-between text-[10px] text-text-secondary font-mono">
-                            <span>{routine.exercises.length} 个动作</span>
-                            <span className="text-athletic-cyan">练后点此打卡 →</span>
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    // 运动类型卡片 (网球/跑步/散步)
                     return (
                       <div
                         key={item.id}
                         draggable
                         onDragStart={(e) => handleDragStart(e, item, day.dayIndex)}
-                        className={`group relative p-2.5 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
-                          item.sportType === 'tennis'
+                        onDragEnd={handleDragEnd}
+                        onClick={() => {
+                          if (isRoutine && routine) onOpenWorkout(routine);
+                        }}
+                        className={`group relative p-2.5 rounded-xl border transition-all cursor-grab active:cursor-grabbing shadow-sm hover:shadow-md select-none ${
+                          isRoutine
+                            ? 'bg-dark-card border-dark-border hover:border-athletic-lime/60'
+                            : item.sportType === 'tennis'
                             ? 'bg-amber-950/20 border-amber-500/40 text-amber-300'
                             : item.sportType === 'running'
                             ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
                             : 'bg-dark-bg/60 border-dark-border text-text-secondary'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-xs flex items-center gap-1.5">
-                            {item.sportType === 'tennis' && '🎾'}
-                            {item.sportType === 'running' && '🏃'}
-                            {item.sportType === 'rest' && '🛌'}
-                            {item.title}
+                        {/* 顶栏：标签 + 快捷操作按钮 (前移、后移、存入备选池、删除) */}
+                        <div className="flex items-start justify-between gap-1.5 mb-1">
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-dark-bg text-athletic-lime font-bold border border-dark-border">
+                            {isRoutine ? routine?.tag : (item.sportType === 'tennis' ? '🎾 网球' : item.sportType === 'running' ? '🏃 跑步' : '🛌 休息')}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteItem(day.dayIndex, item.id)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 text-text-secondary hover:text-athletic-coral transition-opacity"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+
+                          <div className="flex items-center gap-0.5 opacity-90 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                            {/* ← 前移到昨天 */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleShiftDayDelta(day.dayIndex, item.id, -1);
+                              }}
+                              className="p-1 rounded hover:bg-dark-hover text-text-secondary hover:text-text-primary"
+                              title="前移到昨天 (←)"
+                            >
+                              <ArrowLeft className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* → 后移到明天 */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleShiftDayDelta(day.dayIndex, item.id, 1);
+                              }}
+                              className="p-1 rounded hover:bg-dark-hover text-text-secondary hover:text-text-primary"
+                              title="后移到明天 (→)"
+                            >
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 📥 存入备选池 */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSendToBacklog(day.dayIndex, item.id);
+                              }}
+                              className="p-1 rounded hover:bg-dark-hover text-text-secondary hover:text-athletic-cyan"
+                              title="存入自由备选池"
+                            >
+                              <Inbox className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 垃圾桶删除 */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteItem(day.dayIndex, item.id);
+                              }}
+                              className="p-1 rounded hover:bg-dark-hover text-text-secondary hover:text-athletic-coral"
+                              title="删除此项"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        {item.durationMin && (
-                          <div className="mt-1 text-[10px] font-mono opacity-75">
-                            时长: {item.durationMin} 分钟
+
+                        {/* 标题 */}
+                        <div className="font-semibold text-xs text-text-primary group-hover:text-athletic-lime transition-colors">
+                          {isRoutine ? routine?.title : item.title}
+                        </div>
+
+                        {/* 提示文案 */}
+                        <div className="mt-1 flex items-center justify-between text-[10px] text-text-secondary font-mono">
+                          {isRoutine ? (
+                            <>
+                              <span>{routine?.exercises.length} 个动作</span>
+                              <span className="text-athletic-cyan">练后点此打卡 →</span>
+                            </>
+                          ) : (
+                            <span>{item.durationMin ? `时长: ${item.durationMin} 分钟` : '活动日'}</span>
+                          )}
+                        </div>
+
+                        {/* 移动端快捷移动展开面板 */}
+                        {activeMoveItemId === item.id && (
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="mt-2 p-2 bg-dark-bg rounded-lg border border-dark-border text-[11px] space-y-1.5"
+                          >
+                            <div className="text-text-secondary font-semibold">快速移动到:</div>
+                            <div className="grid grid-cols-4 gap-1">
+                              {schedule.map(s => (
+                                <button
+                                  key={s.dayIndex}
+                                  type="button"
+                                  onClick={() => moveItemAtomic(item, day.dayIndex, s.dayIndex)}
+                                  className="p-1 rounded bg-dark-card hover:bg-dark-hover text-center font-mono text-[10px]"
+                                >
+                                  {s.dayName}
+                                </button>
+                              ))}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => moveItemAtomic(item, day.dayIndex, 'backlog')}
+                              className="w-full py-1 rounded bg-dark-card hover:bg-dark-hover text-center text-[10px] text-athletic-cyan"
+                            >
+                              📥 放入自由备选池
+                            </button>
                           </div>
                         )}
                       </div>
@@ -388,41 +505,98 @@ export const WeeklyBoard = ({
         })}
       </div>
 
-      {/* 底部待办备选池 (Backlog Pool) */}
+      {/* 底部自由备选池 (Backlog Pool) */}
       <div
-        onDragOver={handleDragOver}
+        onDragOver={(e) => handleDragOver(e, 'backlog')}
+        onDragLeave={handleDragLeave}
         onDrop={(e) => handleDrop(e, 'backlog')}
-        className="p-4 rounded-2xl bg-dark-surface border border-dashed border-dark-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
+        className={`p-4 rounded-2xl border-2 border-dashed transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+          dragOverTarget === 'backlog'
+            ? 'border-athletic-lime bg-athletic-lime/10 ring-4 ring-athletic-lime/30 shadow-2xl'
+            : 'bg-dark-surface border-dark-border/80'
+        }`}
       >
-        <div className="flex items-center gap-2">
-          <MoveHorizontal className="w-4 h-4 text-athletic-lime" />
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-dark-card border border-dark-border flex items-center justify-center text-athletic-lime shrink-0">
+            <Inbox className="w-4 h-4" />
+          </div>
           <div>
-            <div className="font-semibold text-xs text-text-primary">
-              自由备选池 (暂存区)
+            <div className="font-semibold text-xs text-text-primary flex items-center gap-2">
+              <span>自由备选池 (暂存区)</span>
+              <span className="px-1.5 py-0.2 rounded bg-dark-card border border-dark-border font-mono text-[10px] text-athletic-lime">
+                {backlog.length} 个备选
+              </span>
             </div>
             <div className="text-[11px] text-text-secondary">
-              本周没时间练的项目可以拖到这里，不计入缺勤，随时拖回任意一天
+              {dragOverTarget === 'backlog' ? (
+                <strong className="text-athletic-lime font-bold">✨ 松开鼠标/手指，立即存入备选池！</strong>
+              ) : (
+                '有事耽误的项目可拖入此处或点击卡片上的 📥 按钮存入，不记缺勤；随时可拖回上方任意一天'
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {backlog.length === 0 ? (
-            <span className="text-xs text-text-secondary/50 italic">
-              (暂无备选项目，可从上方拖下)
-            </span>
+            <div className="text-xs text-text-secondary/50 py-2 italic border border-dashed border-dark-border/50 px-3 rounded-lg">
+              (暂无备选项目，直接将上方卡片拖拽到此处，或点击卡片上的 📥)
+            </div>
           ) : (
-            backlog.map(item => (
-              <div
-                key={item.id}
-                draggable
-                onDragStart={(e) => handleDragStart(e, item, 'backlog')}
-                className="px-2.5 py-1.5 rounded-lg bg-dark-card border border-dark-border text-xs text-text-primary cursor-grab active:cursor-grabbing hover:border-athletic-lime transition-all flex items-center gap-1.5"
-              >
-                <span>{item.title || routineTemplates.find(r => r.id === item.routineId)?.title}</span>
-                <span className="text-[10px] text-text-secondary">↕ 拖动</span>
-              </div>
-            ))
+            backlog.map(item => {
+              const routine = item.type === 'routine' ? routineTemplates.find(r => r.id === item.routineId) : null;
+              const title = item.title || routine?.title;
+
+              return (
+                <div
+                  key={item.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, item, 'backlog')}
+                  onDragEnd={handleDragEnd}
+                  className="px-3 py-2 rounded-xl bg-dark-card border border-dark-border hover:border-athletic-lime text-xs text-text-primary cursor-grab active:cursor-grabbing transition-all flex items-center gap-2 shadow-sm"
+                >
+                  <span className="font-semibold">{title}</span>
+
+                  <div className="flex items-center gap-1 border-l border-dark-border pl-1.5 ml-1">
+                    {/* 一键移入今天 */}
+                    <button
+                      type="button"
+                      onClick={() => handleMoveBacklogToDay(item, currentDayIndex)}
+                      className="px-1.5 py-0.5 rounded bg-dark-surface hover:bg-dark-hover text-[10px] font-mono text-athletic-lime border border-dark-border"
+                      title="移到今天"
+                    >
+                      移到今天
+                    </button>
+
+                    {/* 选择指定天 */}
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value !== '') {
+                          handleMoveBacklogToDay(item, Number(e.target.value));
+                        }
+                      }}
+                      defaultValue=""
+                      className="px-1 py-0.5 rounded bg-dark-surface text-[10px] font-mono text-text-secondary border border-dark-border focus:outline-none"
+                    >
+                      <option value="" disabled>排期到...</option>
+                      {schedule.map(s => (
+                        <option key={s.dayIndex} value={s.dayIndex}>{s.dayName}</option>
+                      ))}
+                    </select>
+
+                    {/* 删除 */}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteItem('backlog', item.id)}
+                      className="p-0.5 text-text-secondary hover:text-athletic-coral"
+                      title="从备选池删除"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
