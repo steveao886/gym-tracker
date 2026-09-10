@@ -112,60 +112,51 @@ export const ROUTINE_TEMPLATES = [
   }
 ];
 
-// 默认生成当前周的排期模版 (周一~周日)
+// 默认周排期模版：周一至周三留空，周四自重体能 + 晚间网球，
+// 周五至周日走推 / 拉 / 腿。两个重腿套餐 (深蹲、硬拉) 不排在同一周，
+// 硬拉留在备选池，需要时再拖上来。
 export const getDefaultWeeklySchedule = () => {
   return [
-    {
-      dayIndex: 0,
-      dayName: '周一',
-      items: [
-        { id: 'item-1', type: 'routine', routineId: 'routine_chest_triceps', completed: false }
-      ]
-    },
-    {
-      dayIndex: 1,
-      dayName: '周二',
-      items: [
-        { id: 'item-2', type: 'sport', sportType: 'tennis', title: '网球 (晚间 1.5h)', durationMin: 90, completed: false }
-      ]
-    },
-    {
-      dayIndex: 2,
-      dayName: '周三',
-      items: [
-        { id: 'item-3', type: 'routine', routineId: 'routine_back_biceps', completed: false }
-      ]
-    },
+    { dayIndex: 0, dayName: '周一', items: [] },
+    { dayIndex: 1, dayName: '周二', items: [] },
+    { dayIndex: 2, dayName: '周三', items: [] },
     {
       dayIndex: 3,
       dayName: '周四',
       items: [
-        { id: 'item-4', type: 'routine', routineId: 'routine_squat_core', completed: false }
+        { id: 'item-thu-bw', type: 'routine', routineId: 'routine_outdoor_bodyweight', completed: false },
+        { id: 'item-thu-tennis', type: 'sport', sportType: 'tennis', title: '网球 (晚间 1.5h)', durationMin: 90, completed: false }
       ]
     },
     {
       dayIndex: 4,
       dayName: '周五',
       items: [
-        { id: 'item-5', type: 'sport', sportType: 'rest', title: '主动休息 / 散步', completed: false }
+        { id: 'item-fri-push', type: 'routine', routineId: 'routine_chest_triceps', completed: false }
       ]
     },
     {
       dayIndex: 5,
       dayName: '周六',
       items: [
-        { id: 'item-6', type: 'sport', sportType: 'tennis', title: '网球 (上午/下午 1.5h)', durationMin: 90, completed: false }
+        { id: 'item-sat-pull', type: 'routine', routineId: 'routine_back_biceps', completed: false }
       ]
     },
     {
       dayIndex: 6,
       dayName: '周日',
       items: [
-        { id: 'item-7', type: 'routine', routineId: 'routine_deadlift_shoulders', completed: false }
+        { id: 'item-sun-legs', type: 'routine', routineId: 'routine_squat_core', completed: false }
       ]
     }
   ];
 };
+
+// 备选池默认内容：随时可拖到任意一天
+export const getDefaultBacklog = () => [
+  { id: 'b-deadlift', type: 'routine', routineId: 'routine_deadlift_shoulders' },
+  { id: 'b-run', type: 'sport', sportType: 'running', title: '户外慢跑 5km', durationMin: 30 }
+];
 
 export const INITIAL_APP_DATA = {
   version: '1.0.0',
@@ -180,9 +171,6 @@ export const INITIAL_APP_DATA = {
   exerciseLibrary: EXERCISE_LIBRARY,
   routineTemplates: ROUTINE_TEMPLATES,
   weeklySchedule: getDefaultWeeklySchedule(),
-  backlog: [
-    { id: 'b1', type: 'sport', sportType: 'running', title: '户外慢跑 5km', durationMin: 30 },
-    { id: 'b2', type: 'routine', routineId: 'routine_outdoor_bodyweight' }
-  ],
+  backlog: getDefaultBacklog(),
   history: []
 };

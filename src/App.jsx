@@ -16,6 +16,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { PlateCalculator } from './components/PlateCalculator';
 import { WeightInput } from './components/WeightInput';
 import { applyWorkoutLog } from './lib/progression';
+import { resetWeek } from './lib/resetWeek';
 
 export function App() {
   const [appData, setAppData] = useState(() => storage.loadData());
@@ -309,6 +310,7 @@ export function App() {
           }
         }}
         allData={appData}
+        onResetWeek={() => updateData((prev) => resetWeek(prev))}
         onTriggerSync={(newSettings) => {
           const base = appDataRef.current;
           triggerGitHubSync(newSettings ? { ...base, settings: { ...base.settings, ...newSettings } } : undefined);

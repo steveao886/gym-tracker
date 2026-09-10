@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Key, GitBranch, RefreshCw, Download, Upload, CheckCircle2, AlertCircle, ExternalLink, ShieldCheck } from 'lucide-react';
+import { X, Key, RefreshCw, Download, Upload, CheckCircle2, AlertCircle, ExternalLink, ShieldCheck, CalendarRange } from 'lucide-react';
 import { githubApi } from '../services/githubApi';
 
 // 外层只负责开关；表单在打开时才挂载并初始化 hooks，避免在 return null 之后调用 useState
@@ -15,13 +15,15 @@ const SettingsForm = ({
   onExportJSON,
   onImportJSON,
   allData,
-  onTriggerSync
+  onTriggerSync,
+  onResetWeek
 }) => {
   const [token, setToken] = useState(settings.githubToken || '');
   const [repo, setRepo] = useState(settings.githubRepo || '');
   const [branch, setBranch] = useState(settings.githubBranch || 'main');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState(null); // { success: boolean, msg: string }
+  const [isConfirmingReset, setIsConfirmingReset] = useState(false);
 
   const handleSave = () => {
     onUpdateSettings({
@@ -176,6 +178,56 @@ const SettingsForm = ({
                 {testResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
                 <span className="text-[11px] leading-relaxed">{testResult.msg}</span>
               </div>
+            )}
+          </div>
+
+          {/* 重排本周 */}
+          <div className="pt-3 border-t border-dark-border space-y-2">
+            <div className="font-semibold text-text-primary">
+              重排本周
+            </div>
+
+            {isConfirmingReset ? (
+              <div className="p-3 rounded-xl bg-athletic-coral/10 border border-athletic-coral/30 space-y-2.5">
+                <p className="text-[11px] text-text-secondary leading-relaxed">
+                  七天看板会恢复成预设排期，你在看板上做过的<strong className="text-athletic-coral">手动调整会被清空</strong>。
+                  备选池、历史记录与工作重量都会保留。
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onResetWeek();
+                      setIsConfirmingReset(false);
+                      onClose();
+                    }}
+                    className="flex-1 py-2 px-3 rounded-lg bg-athletic-coral text-white font-bold hover:brightness-110 active:scale-[0.99] transition-all"
+                  >
+                    确认重排
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsConfirmingReset(false)}
+                    className="py-2 px-3 rounded-lg bg-dark-card hover:bg-dark-hover border border-dark-border text-text-secondary hover:text-text-primary"
+                  >
+                    取消重排
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingReset(true)}
+                  className="w-full py-2 px-3 rounded-lg bg-dark-card hover:bg-dark-hover border border-dark-border text-text-secondary hover:text-text-primary flex items-center justify-center gap-1.5"
+                >
+                  <CalendarRange className="w-3.5 h-3.5" />
+                  重排本周
+                </button>
+                <p className="text-[10px] text-text-secondary">
+                  新一周开始时用它把看板恢复成预设排期：周四自重体能配晚间网球，周五到周日走推 / 拉 / 腿。
+                </p>
+              </>
             )}
           </div>
 

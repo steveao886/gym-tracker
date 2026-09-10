@@ -57,8 +57,8 @@ describe('App: GitHub auto-sync', () => {
 
     expect(githubApi.syncData).toHaveBeenCalled();
     const pushed = githubApi.syncData.mock.calls.at(-1)[3];
-    expect(pushed.weeklySchedule[0].items).toEqual([]);
-    expect(pushed.weeklySchedule[1].items.map(i => i.id)).toContain('item-1');
+    expect(pushed.weeklySchedule[4].items).toEqual([]);
+    expect(pushed.weeklySchedule[5].items.map(i => i.id)).toContain('item-fri-push');
   });
 });
 
@@ -151,9 +151,51 @@ describe('App: workout logging', () => {
     expect(data.history).toHaveLength(1);
     expect(data.history[0].routineId).toBe('routine_chest_triceps');
     expect(data.exerciseLibrary.find(e => e.id === 'bench_press').currentWeight).toBe(140);
-    expect(data.weeklySchedule[0].items[0].completed).toBe(true);
+    expect(data.weeklySchedule[4].items[0].completed).toBe(true);
 
     fireEvent.click(screen.getByText('大盘与巅峰'));
     expect(screen.getByText('卧推主导 · 胸与三头')).toBeInTheDocument();
+  });
+});
+
+describe('App: reset week', () => {
+  it('restores the template grid while keeping history and working weights', () => {
+    seed();
+    render(<App />);
+
+    // 先打一次卡，制造历史与加重，再把周五的卡片挪走
+    openWorkout('阳光后院 · 纯自重与体能');
+    fireEvent.click(screen.getByText('按计划全部完成 (一键打卡)'));
+    const pushCard = screen.getByText('卧推主导 · 胸与三头').closest('[draggable]');
+    fireEvent.click(pushCard.querySelector('[title="存入自由备选池"]'));
+
+    const moved = stored();
+    expect(moved.weeklySchedule[4].items).toEqual([]);
+    expect(moved.history).toHaveLength(1);
+
+    fireEvent.click(screen.getByTitle('设置与数据同步'));
+    fireEvent.click(screen.getByRole('button', { name: '重排本周' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认重排' }));
+
+    const after = stored();
+    expect(after.weeklySchedule[4].items.map(i => i.routineId)).toEqual(['routine_chest_triceps']);
+    expect(after.weeklySchedule[0].items).toEqual([]);
+    expect(after.history).toHaveLength(1);
+    expect(after.exerciseLibrary.find(e => e.id === 'push_ups')).toBeDefined();
+  });
+
+  it('clears the completed flag set by an earlier check-in', () => {
+    seed();
+    render(<App />);
+
+    openWorkout('阳光后院 · 纯自重与体能');
+    fireEvent.click(screen.getByText('按计划全部完成 (一键打卡)'));
+    expect(stored().weeklySchedule[3].items[0].completed).toBe(true);
+
+    fireEvent.click(screen.getByTitle('设置与数据同步'));
+    fireEvent.click(screen.getByRole('button', { name: '重排本周' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认重排' }));
+
+    expect(stored().weeklySchedule[3].items[0].completed).toBe(false);
   });
 });

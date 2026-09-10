@@ -35,8 +35,8 @@ describe('WeeklyBoard', () => {
     fireEvent.click(within(card).getByTitle('后移到明天 (→)'));
 
     const { schedule } = lastUpdate();
-    expect(ids(schedule[0])).toEqual([]);
-    expect(ids(schedule[1])).toContain('item-1');
+    expect(ids(schedule[4])).toEqual([]);
+    expect(ids(schedule[5])).toContain('item-fri-push');
   });
 
   it('sends a card to the backlog with the inbox button', () => {
@@ -45,15 +45,15 @@ describe('WeeklyBoard', () => {
     fireEvent.click(within(card).getByTitle('存入自由备选池'));
 
     const { schedule, backlog } = lastUpdate();
-    expect(ids(schedule[0])).toEqual([]);
-    expect(backlog.map(i => i.id)).toEqual(['b1', 'item-1']);
+    expect(ids(schedule[4])).toEqual([]);
+    expect(backlog.map(i => i.id)).toEqual(['b1', 'item-fri-push']);
   });
 
   it('deletes a card', () => {
     const { lastUpdate } = setup();
     const card = cardFor('卧推主导 · 胸与三头');
     fireEvent.click(within(card).getByTitle('删除此项'));
-    expect(ids(lastUpdate().schedule[0])).toEqual([]);
+    expect(ids(lastUpdate().schedule[4])).toEqual([]);
   });
 
   it('opens the workout logger when a routine card is clicked', () => {
@@ -80,14 +80,15 @@ describe('WeeklyBoard', () => {
 
   it('shows a conflict warning when tennis and a leg-heavy routine share a day, and can defer the routine', () => {
     const schedule = getDefaultWeeklySchedule();
-    schedule[1].items.push({ id: 'legs', type: 'routine', routineId: 'routine_squat_core', completed: false });
+    // 周四模版里已有晚间网球，再加一个重腿套餐即触发冲突
+    schedule[3].items.push({ id: 'legs', type: 'routine', routineId: 'routine_squat_core', completed: false });
     const { lastUpdate } = setup({ schedule });
 
     expect(screen.getByText('网球与深蹲主导 · 下肢与核心同日')).toBeInTheDocument();
     fireEvent.click(screen.getByText('一键顺延至明天'));
 
     const next = lastUpdate().schedule;
-    expect(ids(next[1])).not.toContain('legs');
-    expect(ids(next[2])).toContain('legs');
+    expect(ids(next[3])).not.toContain('legs');
+    expect(ids(next[4])).toContain('legs');
   });
 });
