@@ -3,16 +3,19 @@ import { X, Check, Dumbbell, ArrowUpRight, Flame, Plus, Minus, RotateCcw, AlertC
 import confetti from 'canvas-confetti';
 import { PlateCalculator } from './PlateCalculator';
 
-export const WorkoutModal = ({
-  isOpen,
+// 外层只负责开关；内层组件在打开时才挂载并初始化 hooks，避免在 return null 之后调用 useState
+export const WorkoutModal = ({ isOpen, routine, ...rest }) => {
+  if (!isOpen || !routine) return null;
+  return <WorkoutLogger key={routine.id} routine={routine} {...rest} />;
+};
+
+const WorkoutLogger = ({
   onClose,
   routine,
   exerciseLibrary,
   onSaveWorkout,
   peakRecords = {}
 }) => {
-  if (!isOpen || !routine) return null;
-
   // 初始状态：将动作库中最新的当前工作重量与目标组次数预填
   const [exercisesState, setExercisesState] = useState(() => {
     return routine.exercises.map((item) => {
@@ -111,6 +114,8 @@ export const WorkoutModal = ({
             </h2>
           </div>
           <button
+            type="button"
+            aria-label="关闭"
             onClick={onClose}
             className="p-2 text-text-secondary hover:text-text-primary hover:bg-dark-hover rounded-lg transition-colors"
           >

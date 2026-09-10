@@ -1,31 +1,8 @@
 import React from 'react';
 
-// 计算单边需要的杠铃片 (基于标准 45 lbs 杠铃杆)
-export const calculatePlates = (targetWeight, barWeight = 45) => {
-  if (targetWeight <= barWeight) {
-    return { plates: [], perSideWeight: 0, remainder: 0 };
-  }
+import { calculatePlates } from '../lib/plates';
 
-  const netWeight = targetWeight - barWeight;
-  const perSideTarget = netWeight / 2;
-  const availablePlates = [45, 35, 25, 10, 5, 2.5];
-  
-  const result = [];
-  let remaining = perSideTarget;
-
-  for (const plate of availablePlates) {
-    while (remaining >= plate) {
-      result.push(plate);
-      remaining = Math.round((remaining - plate) * 10) / 10;
-    }
-  }
-
-  return {
-    plates: result,
-    perSideWeight: perSideTarget,
-    remainder: remaining
-  };
-};
+export { calculatePlates };
 
 const PLATE_STYLES = {
   45: { label: '45', height: 'h-14', bg: 'bg-emerald-600 border-emerald-400 text-white', width: 'w-4' },

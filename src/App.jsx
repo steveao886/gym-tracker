@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Dumbbell,
   Calendar,
@@ -14,6 +14,8 @@ import { StatsDashboard } from './components/StatsDashboard';
 import { WorkoutModal } from './components/WorkoutModal';
 import { SettingsModal } from './components/SettingsModal';
 import { PlateCalculator } from './components/PlateCalculator';
+import { WeightInput } from './components/WeightInput';
+import { applyWorkoutLog } from './lib/progression';
 
 export function App() {
   const [appData, setAppData] = useState(() => storage.loadData());
@@ -22,6 +24,10 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState('idle'); // 'idle' | 'syncing' | 'synced' | 'error'
   const [syncMessage, setSyncMessage] = useState('');
+
+  // 始终指向最新数据，供异步同步与弹窗回调使用，避免闭包拿到过期状态
+  const appDataRef = useRef(appData);
+  appDataRef.current = appData;
 
   // 每次本地状态变化，先立即持久化到 LocalStorage (Local-First)
   const updateData = useCallback((newDataOrFn) => {
@@ -33,7 +39,8 @@ export function App() {
   }, []);
 
   // 触发后台同步到 GitHub
-  const triggerGitHubSync = useCallback(async (currentData = appData) => {
+  const triggerGitHubSync = useCallback(async (dataOverride) => {
+    const currentData = dataOverride || appDataRef.current;
     const { githubToken, githubRepo, githubBranch } = currentData.settings;
     if (!githubToken || !githubRepo) {
       setSyncStatus('idle');
@@ -64,7 +71,7 @@ export function App() {
       setSyncStatus('error');
       setSyncMessage(err.message || '同步失败');
     }
-  }, [appData]);
+  }, []);
 
   // 当 appData 改变并且已配置 GitHub 时，进行静默同步
   useEffect(() => {
@@ -74,51 +81,11 @@ export function App() {
       }, 3000); // 3秒防抖
       return () => clearTimeout(timer);
     }
-  }, [appData.schedule, appData.history, appData.exerciseLibrary]);
+  }, [appData.weeklySchedule, appData.backlog, appData.history, appData.exerciseLibrary]);
 
-  // 处理练后打卡完成 (双重递进逻辑在此计算生效)
+  // 处理练后打卡完成 (双重递进逻辑见 lib/progression)
   const handleSaveWorkout = (workoutLog) => {
-    updateData((prev) => {
-      // 1. 更新历史记录
-      const newHistory = [workoutLog, ...prev.history];
-
-      // 2. 双重递进：对达标项目自动微增建议工作重量
-      const updatedExerciseLib = prev.exerciseLibrary.map((ex) => {
-        const loggedEx = workoutLog.exercises.find((e) => e.id === ex.id);
-        if (loggedEx && loggedEx.completed) {
-          let newWeight = loggedEx.weight;
-          // 如果用户确认做满了设定目标次数，自动推荐递增重量
-          if (loggedEx.targetMet && loggedEx.weight > 0) {
-            const isLower = ex.id.includes('squat') || ex.id.includes('deadlift') || ex.id.includes('rdl');
-            const increment = isLower ? 10 : 5; // 下肢+10磅，上肢+5磅
-            newWeight = loggedEx.weight + increment;
-          }
-          return {
-            ...ex,
-            currentWeight: newWeight
-          };
-        }
-        return ex;
-      });
-
-      // 3. 将排期中对应的套餐标记为已完成
-      const newSchedule = prev.weeklySchedule.map((day) => ({
-        ...day,
-        items: day.items.map((item) => {
-          if (item.type === 'routine' && item.routineId === workoutLog.routineId) {
-            return { ...item, completed: true };
-          }
-          return item;
-        })
-      }));
-
-      return {
-        ...prev,
-        history: newHistory,
-        exerciseLibrary: updatedExerciseLib,
-        weeklySchedule: newSchedule
-      };
-    });
+    updateData((prev) => applyWorkoutLog(prev, workoutLog));
   };
 
   return (
@@ -281,17 +248,14 @@ export function App() {
                     )}
                   </div>
 
-                  {ex.currentWeight > 0 && (
+                  {(ex.category !== 'bodyweight' || ex.currentWeight > 0) && (
                     <div className="pt-2 border-t border-dark-border/50 flex flex-col gap-2">
                       <div className="flex items-center justify-between text-xs font-mono">
                         <span className="text-text-secondary">当前基准工作重量:</span>
                         <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            step="5"
+                          <WeightInput
                             value={ex.currentWeight}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
+                            onCommit={(val) => {
                               updateData((prev) => ({
                                 ...prev,
                                 exerciseLibrary: prev.exerciseLibrary.map(item =>
@@ -333,7 +297,7 @@ export function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={appData.settings}
-        onUpdateSettings={(newSettings) => updateData({ ...appData, settings: newSettings })}
+        onUpdateSettings={(newSettings) => updateData((prev) => ({ ...prev, settings: { ...prev.settings, ...newSettings } }))}
         onExportJSON={() => storage.exportJSON(appData)}
         onImportJSON={async (file) => {
           try {
@@ -345,7 +309,10 @@ export function App() {
           }
         }}
         allData={appData}
-        onTriggerSync={() => triggerGitHubSync()}
+        onTriggerSync={(newSettings) => {
+          const base = appDataRef.current;
+          triggerGitHubSync(newSettings ? { ...base, settings: { ...base.settings, ...newSettings } } : undefined);
+        }}
       />
 
     </div>

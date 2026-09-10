@@ -1,22 +1,13 @@
 import React, { useState } from 'react';
+import { Calendar, Plus, Trash2, AlertTriangle, ArrowRight, ArrowLeft, Inbox } from 'lucide-react';
 import {
-  Calendar,
-  Dumbbell,
-  Activity,
-  Plus,
-  Trash2,
-  AlertTriangle,
-  ArrowRight,
-  ArrowLeft,
-  Archive,
-  Inbox,
-  Clock,
-  Sparkles,
-  MoveHorizontal,
-  ChevronDown,
-  CornerDownRight,
-  Send
-} from 'lucide-react';
+  getTodayIndex,
+  moveItem,
+  shiftItem,
+  addItem,
+  deleteItem,
+  checkDayConflict
+} from '../lib/schedule';
 
 export const WeeklyBoard = ({
   schedule = [],
@@ -30,43 +21,19 @@ export const WeeklyBoard = ({
   const [draggedItem, setDraggedItem] = useState(null); // { item, fromDay }
   const [dragOverTarget, setDragOverTarget] = useState(null); // number | 'backlog' | null
   const [activeMenuDay, setActiveMenuDay] = useState(null);
-  const [activeMoveItemId, setActiveMoveItemId] = useState(null);
 
-  // 获取今天是周几 (0=周一, ... 6=周日)
-  const currentDayIndex = (() => {
-    const day = new Date().getDay(); // 0 is Sunday in JS
-    return day === 0 ? 6 : day - 1;
-  })();
+  const currentDayIndex = getTodayIndex();
+  const boardState = { schedule, backlog };
 
   // 统一的原子化更新方法，避免 React 状态覆盖
-  const commitChanges = (newSchedule, newBacklog) => {
+  const commitChanges = (next) => {
+    if (next === boardState) return;
     if (onUpdateBoard) {
-      onUpdateBoard({ schedule: newSchedule, backlog: newBacklog });
+      onUpdateBoard({ schedule: next.schedule, backlog: next.backlog });
     } else {
-      if (onUpdateSchedule) onUpdateSchedule(newSchedule);
-      if (onUpdateBacklog) onUpdateBacklog(newBacklog);
+      if (onUpdateSchedule) onUpdateSchedule(next.schedule);
+      if (onUpdateBacklog) onUpdateBacklog(next.backlog);
     }
-  };
-
-  // 冲突检测：某一天是否同时有网球和重负荷腿部 (Squat/Deadlift)
-  const checkDayConflict = (dayItems) => {
-    const hasTennis = dayItems.some(i => i.type === 'sport' && i.sportType === 'tennis');
-    if (!hasTennis) return null;
-
-    const heavyLegItem = dayItems.find(i => {
-      if (i.type !== 'routine') return false;
-      const routine = routineTemplates.find(r => r.id === i.routineId);
-      return routine && routine.isLegHeavy;
-    });
-
-    if (heavyLegItem) {
-      const routine = routineTemplates.find(r => r.id === heavyLegItem.routineId);
-      return {
-        heavyItem: heavyLegItem,
-        routineTitle: routine ? routine.title : '下肢重训'
-      };
-    }
-    return null;
   };
 
   // --- 拖拽生命周期处理 ---
@@ -91,7 +58,7 @@ export const WeeklyBoard = ({
     e.preventDefault();
   };
 
-  const handleDrop = (e, targetDayOrBacklog) => {
+  const handleDrop = (e, target) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverTarget(null);
@@ -111,20 +78,10 @@ export const WeeklyBoard = ({
       } catch (err) {}
     }
 
-    if (!item || fromDay === undefined || fromDay === null) {
-      setDraggedItem(null);
-      return;
-    }
-
-    // 拖入相同位置，无操作
-    if (fromDay === targetDayOrBacklog) {
-      setDraggedItem(null);
-      return;
-    }
-
-    // 执行跨列/跨备选池移动
-    moveItemAtomic(item, fromDay, targetDayOrBacklog);
     setDraggedItem(null);
+    if (!item || fromDay === undefined || fromDay === null) return;
+
+    commitChanges(moveItem(boardState, item, fromDay, target));
   };
 
   const handleDragEnd = () => {
@@ -132,56 +89,20 @@ export const WeeklyBoard = ({
     setDragOverTarget(null);
   };
 
-  // 原子化移动方法 (支持拖拽或直接点击按钮调用)
-  const moveItemAtomic = (item, fromLocation, toLocation) => {
-    const newSchedule = schedule.map(d => ({ ...d, items: [...d.items] }));
-    let newBacklog = [...backlog];
-
-    // 1. 从来源移除
-    if (fromLocation === 'backlog') {
-      newBacklog = newBacklog.filter(i => i.id !== item.id);
-    } else {
-      const fromIdx = Number(fromLocation);
-      newSchedule[fromIdx].items = newSchedule[fromIdx].items.filter(i => i.id !== item.id);
-    }
-
-    // 2. 添加到目标
-    if (toLocation === 'backlog') {
-      // 避免重复
-      if (!newBacklog.some(i => i.id === item.id)) {
-        newBacklog.push(item);
-      }
-    } else {
-      const toIdx = Number(toLocation);
-      newSchedule[toIdx].items.push(item);
-    }
-
-    commitChanges(newSchedule, newBacklog);
-    setActiveMoveItemId(null);
-  };
-
   // 快捷前移 (昨天) 或 后移 (明天)
   const handleShiftDayDelta = (fromDayIdx, itemId, delta) => {
-    const targetDayIdx = (fromDayIdx + delta + 7) % 7;
-    const day = schedule[fromDayIdx];
-    const item = day?.items.find(i => i.id === itemId);
-    if (!item) return;
-
-    moveItemAtomic(item, fromDayIdx, targetDayIdx);
+    commitChanges(shiftItem(boardState, fromDayIdx, itemId, delta));
   };
 
   // 快捷存入备选池
   const handleSendToBacklog = (fromDayIdx, itemId) => {
-    const day = schedule[fromDayIdx];
-    const item = day?.items.find(i => i.id === itemId);
-    if (!item) return;
-
-    moveItemAtomic(item, fromDayIdx, 'backlog');
+    const item = schedule[fromDayIdx]?.items.find(i => i.id === itemId);
+    if (item) commitChanges(moveItem(boardState, item, fromDayIdx, 'backlog'));
   };
 
   // 快捷从备选池移入今天或指定天
   const handleMoveBacklogToDay = (item, targetDayIdx) => {
-    moveItemAtomic(item, 'backlog', targetDayIdx);
+    commitChanges(moveItem(boardState, item, 'backlog', targetDayIdx));
   };
 
   // 冲突自动避让：将当天的腿部移动到明天
@@ -189,35 +110,13 @@ export const WeeklyBoard = ({
     handleShiftDayDelta(dayIdx, heavyItemId, 1);
   };
 
-  // 添加新活动
   const handleAddItem = (dayIndex, newItem) => {
-    const newSchedule = schedule.map((d, idx) => {
-      if (idx === dayIndex) {
-        return {
-          ...d,
-          items: [...d.items, { id: 'item-' + Date.now(), completed: false, ...newItem }]
-        };
-      }
-      return d;
-    });
-    commitChanges(newSchedule, backlog);
+    commitChanges(addItem(boardState, dayIndex, newItem));
     setActiveMenuDay(null);
   };
 
-  // 删除项目
-  const handleDeleteItem = (dayIndex, itemId) => {
-    if (dayIndex === 'backlog') {
-      const newBacklog = backlog.filter(i => i.id !== itemId);
-      commitChanges(schedule, newBacklog);
-    } else {
-      const newSchedule = schedule.map((d, idx) => {
-        if (idx === dayIndex) {
-          return { ...d, items: d.items.filter(i => i.id !== itemId) };
-        }
-        return d;
-      });
-      commitChanges(newSchedule, backlog);
-    }
+  const handleDeleteItem = (location, itemId) => {
+    commitChanges(deleteItem(boardState, location, itemId));
   };
 
   return (
@@ -249,7 +148,7 @@ export const WeeklyBoard = ({
         {schedule.map((day) => {
           const isToday = day.dayIndex === currentDayIndex;
           const isOver = dragOverTarget === day.dayIndex;
-          const conflict = checkDayConflict(day.items);
+          const conflict = checkDayConflict(day.items, routineTemplates);
 
           return (
             <div
@@ -466,35 +365,6 @@ export const WeeklyBoard = ({
                             <span>{item.durationMin ? `时长: ${item.durationMin} 分钟` : '活动日'}</span>
                           )}
                         </div>
-
-                        {/* 移动端快捷移动展开面板 */}
-                        {activeMoveItemId === item.id && (
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="mt-2 p-2 bg-dark-bg rounded-lg border border-dark-border text-[11px] space-y-1.5"
-                          >
-                            <div className="text-text-secondary font-semibold">快速移动到:</div>
-                            <div className="grid grid-cols-4 gap-1">
-                              {schedule.map(s => (
-                                <button
-                                  key={s.dayIndex}
-                                  type="button"
-                                  onClick={() => moveItemAtomic(item, day.dayIndex, s.dayIndex)}
-                                  className="p-1 rounded bg-dark-card hover:bg-dark-hover text-center font-mono text-[10px]"
-                                >
-                                  {s.dayName}
-                                </button>
-                              ))}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => moveItemAtomic(item, day.dayIndex, 'backlog')}
-                              className="w-full py-1 rounded bg-dark-card hover:bg-dark-hover text-center text-[10px] text-athletic-cyan"
-                            >
-                              📥 放入自由备选池
-                            </button>
-                          </div>
-                        )}
                       </div>
                     );
                   })

@@ -1,19 +1,19 @@
 // GitHub REST API 读写通信服务 (针对私有仓库的单文件 JSON 同步)
 
 // UTF-8 安全的 Base64 编码解码
-const utoa = (str) => {
+export const utoa = (str) => {
   return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
     return String.fromCharCode(parseInt(p1, 16));
   }));
 };
 
-const atou = (b64) => {
+export const atou = (b64) => {
   return decodeURIComponent(Array.prototype.map.call(atob(b64), (c) => {
     return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
   }).join(''));
 };
 
-const parseRepo = (repoStr) => {
+export const parseRepo = (repoStr) => {
   const parts = repoStr.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '').split('/');
   if (parts.length >= 2) {
     return { owner: parts[0], repo: parts[1] };

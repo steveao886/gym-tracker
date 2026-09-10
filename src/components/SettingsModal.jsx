@@ -2,8 +2,13 @@ import React, { useState } from 'react';
 import { X, Key, GitBranch, RefreshCw, Download, Upload, CheckCircle2, AlertCircle, ExternalLink, ShieldCheck } from 'lucide-react';
 import { githubApi } from '../services/githubApi';
 
-export const SettingsModal = ({
-  isOpen,
+// 外层只负责开关；表单在打开时才挂载并初始化 hooks，避免在 return null 之后调用 useState
+export const SettingsModal = ({ isOpen, ...rest }) => {
+  if (!isOpen) return null;
+  return <SettingsForm {...rest} />;
+};
+
+const SettingsForm = ({
   onClose,
   settings,
   onUpdateSettings,
@@ -12,8 +17,6 @@ export const SettingsModal = ({
   allData,
   onTriggerSync
 }) => {
-  if (!isOpen) return null;
-
   const [token, setToken] = useState(settings.githubToken || '');
   const [repo, setRepo] = useState(settings.githubRepo || '');
   const [branch, setBranch] = useState(settings.githubBranch || 'main');
@@ -44,14 +47,15 @@ export const SettingsModal = ({
         success: true,
         msg: `连接成功！已找到仓库: ${res.repoName} (${res.isPrivate ? '私有' : '公开'})`
       });
-      // 立即触发一次全量同步
-      onUpdateSettings({
+      // 立即用刚填写的配置触发一次全量同步 (显式传入，避免拿到保存前的旧设置)
+      const nextSettings = {
         githubToken: token.trim(),
         githubRepo: repo.trim(),
         githubBranch: branch.trim()
-      });
+      };
+      onUpdateSettings(nextSettings);
       if (onTriggerSync) {
-        onTriggerSync();
+        onTriggerSync(nextSettings);
       }
     } catch (err) {
       setTestResult({ success: false, msg: err.message || '连接失败' });
@@ -80,6 +84,8 @@ export const SettingsModal = ({
             </h2>
           </div>
           <button
+            type="button"
+            aria-label="关闭"
             onClick={onClose}
             className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-dark-hover rounded-lg transition-colors"
           >

@@ -27,14 +27,12 @@ export const StatsDashboard = ({
     });
   });
 
-  // 巅峰恢复计算列表
-  const peakExercises = [
-    { id: 'bench_press', key: 'bench', name: '杠铃平板卧推', peak: 225 },
-    { id: 'back_squat', key: 'squat', name: '标准杠铃后深蹲', peak: 315 },
-    { id: 'deadlift', key: 'deadlift', name: '传统杠铃硬拉', peak: 405 },
-    { id: 'barbell_ohp', key: 'ohp', name: '杠铃站姿推举', peak: 135 },
-    { id: 'tbar_row', key: 'row', name: 'T-Bar 地雷管划船', peak: 160 },
-  ];
+  // 巅峰恢复计算列表：以动作库中的 peakLbs 为唯一数据来源
+  const PEAK_TRACKED_IDS = ['bench_press', 'back_squat', 'deadlift', 'barbell_ohp', 'tbar_row'];
+  const peakExercises = PEAK_TRACKED_IDS
+    .map(id => exerciseLibrary.find(e => e.id === id))
+    .filter(ex => ex && ex.peakLbs)
+    .map(ex => ({ id: ex.id, name: ex.name, peak: ex.peakLbs }));
 
   return (
     <div className="space-y-6">
